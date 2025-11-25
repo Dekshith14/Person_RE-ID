@@ -1,0 +1,7 @@
+outputs/
+__pycache__/
+*.mp4
+*.avi
+*.mkv
+*.mov
+reid_env/
