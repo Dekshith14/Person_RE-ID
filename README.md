@@ -112,3 +112,134 @@ The gallery file (`my_known_gallery.pth`) contains fused embeddings for known in
 
 ---
 
+# 1. **Architecture Diagram (ASCII)**
+
+```text
+                     +----------------------+
+                     |     Streamlit UI     |
+                     |  (Video Upload Page) |
+                     +----------+-----------+
+                                |
+                                v
+                   +---------------------------+
+                   |     Inference Pipeline    |
+                   |       (app.py → reid)     |
+                   +---------------------------+
+                                |
+              ------------------------------------------------
+              |                     |                       |
+              v                     v                       v
+     +----------------+   +--------------------+   +------------------+
+     | YOLOv8-Seg     |   | YOLOv8-Pose       |   | OSNet (Torchreid)|
+     | Detection &    |   | Keypoints (Body   |   | Appearance Embd. |
+     | Tracking       |   | Ratios)           |   | (512-dim)        |
+     +-------+--------+   +---------+----------+   +--------+---------+
+             |                        |                      |
+             |                        |                      |
+             v                        v                      v
+  +------------------+      +------------------+     +-------------------+
+  | Silhouette Mask  |      | Body Ratio Vec   |     | RGB Crop → Embd.  |
+  +--------+---------+      +--------+---------+     +---------+---------+
+           |                         |                         |
+           v                         |                         |
+  +-----------------------+          |                         |
+  | Gait CNN-LSTM Model   |          |                         |
+  | (256-dim embedding)   |          |                         |
+  +-----------+-----------+          |                         |
+              \                     /                          |
+               \                   /                           |
+                \                 /                            |
+                 v               v                             v
+                      +------------------------------+
+                      |   3-Way Feature Fusion       |
+                      |  [256 + 512 + 2 = 770 dims]   |
+                      +---------------+--------------+
+                                      |
+                                      v
+                      +------------------------------+
+                      | Gallery Matching (CDIST)     |
+                      | Threshold-Based Re-ID        |
+                      +---------------+--------------+
+                                      |
+                                      v
+                      +------------------------------+
+                      |  Person ID Assignment        |
+                      |  (Known / Unknown)           |
+                      +---------------+--------------+
+                                      |
+                                      v
+                      +------------------------------+
+                      | Final Video Rendering        |
+                      | (Boxes + IDs drawn)          |
+                      +------------------------------+
+```
+
+---
+
+# 2. **Small Pipeline Illustration**
+
+```text
+Input Video
+     ↓
+YOLOv8-Seg → Person Tracking + Masks
+     ↓
+For each person:
+     ├── Silhouette → Gait CNN-LSTM → 256-dim
+     ├── RGB Crop → OSNet → 512-dim
+     └── Keypoints → Body Ratios → 2-dim
+
+Fuse Features → 770-dimensional vector
+     ↓
+Compare with Gallery Embeddings
+     ↓
+Assign Identity (Known / Unknown)
+     ↓
+Draw Bounding Boxes + Labels
+     ↓
+Output Processed Video
+```
+
+---
+
+
+```
+
+#### **Parameters**
+
+| Name                | Type  | Description                                      |
+| ------------------- | ----- | ------------------------------------------------ |
+| `input_video_path`  | `str` | Path to the input video file.                    |
+| `output_video_path` | `str` | Path where processed output video will be saved. |
+
+---
+
+### **Model Components Loaded internally**
+
+| Component          | Description                              |
+| ------------------ | ---------------------------------------- |
+| YOLOv8-Seg         | Tracking, bounding boxes, silhouettes    |
+| YOLOv8-Pose        | Keypoints for biometric ratios           |
+| Gait CNN-LSTM      | Silhouette-based gait embedding          |
+| OSNet (Torchreid)  | RGB crop appearance embedding            |
+| Gallery embeddings | Stored in `gallery/my_known_gallery.pth` |
+
+---
+
+### **Processing Flow**
+
+1. Load all models (lazy-loading cached)
+2. Open input video with OpenCV
+3. For each frame:
+
+   * Run YOLOv8-Seg tracking
+   * Extract person masks, crops, and IDs
+   * Process gait sequence (when 30 frames are collected)
+   * Process appearance embedding
+   * Process body ratios
+   * Compute final 770-dim embedding
+   * Match with gallery using `torch.cdist`
+   * Assign identity
+   * Draw bounding box + label
+4. Save output video
+
+---
